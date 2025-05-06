@@ -1,5 +1,5 @@
-const express = require('express');
-const WebSocket = require('ws');
+const express = require("express");
+const WebSocket = require("ws");
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -12,60 +12,54 @@ let messageId = 1;
 const pendingRequests = {};
 let isConnected = false;
 let reconnectAttempts = 0;
-const maxReconnectAttempts = 10;
+const maxReconnectAttempts = 10; // Definindo um limite para tentativas de reconexão
 
 // Função para conectar ao WebSocket do SideSwap
 function connectToSideSwap() {
-    // Usar o endpoint de testnet (ou troque para produção se necessário)
-    const wsUrl = 'wss://api-testnet.sideswap.io/json-rpc-ws';
+    const wsUrl = "wss://api-testnet.sideswap.io/json-rpc-ws";
     console.log(`Tentativa ${reconnectAttempts + 1}: Conectando a ${wsUrl}...`);
 
     try {
         sideswapWs = new WebSocket(wsUrl);
 
-        sideswapWs.on('open', () => {
-            console.log('Conexão WebSocket estabelecida com SideSwap');
+        sideswapWs.on("open", () => {
+            console.log("Conexão WebSocket estabelecida com SideSwap");
             isConnected = true;
-            reconnectAttempts = 0;
+            reconnectAttempts = 0; // Resetar tentativas ao conectar com sucesso
         });
 
-        sideswapWs.on('message', (data) => {
+        sideswapWs.on("message", (data) => {
             try {
                 const response = JSON.parse(data.toString());
-                console.log('Resposta recebida:', JSON.stringify(response).substring(0, 100) + '...');
+                console.log("Resposta recebida:", JSON.stringify(response).substring(0, 100) + "...");
 
-                // Se a resposta tem um ID e temos uma promessa pendente para esse ID
                 if (response.id && pendingRequests[response.id]) {
                     const { resolve } = pendingRequests[response.id];
                     resolve(response);
                     delete pendingRequests[response.id];
-                } else {
-                    // console.log('Mensagem recebida sem handler ou é uma notificação.');
                 }
             } catch (error) {
-                console.error('Erro ao processar mensagem:', error);
+                console.error("Erro ao processar mensagem:", error);
             }
         });
 
-        sideswapWs.on('error', (error) => {
-            console.error('Erro na conexão WebSocket:', error.message);
+        sideswapWs.on("error", (error) => {
+            console.error("Erro na conexão WebSocket:", error.message);
             isConnected = false;
-            // Tentar reconectar após um erro, se não exceder o limite
-            // scheduleReconnect(); // Comentado para evitar loop durante deploy inicial
+            scheduleReconnect(); // Reativado: Tentar reconectar após um erro
         });
 
-        sideswapWs.on('close', (code, reason) => {
-            console.log(`Conexão WebSocket fechada. Código: ${code}, Motivo: ${reason ? reason.toString() : 'N/A'}`);
+        sideswapWs.on("close", (code, reason) => {
+            console.log(`Conexão WebSocket fechada. Código: ${code}, Motivo: ${reason ? reason.toString() : "N/A"}`);
             isConnected = false;
-            // Tentar reconectar quando a conexão é fechada inesperadamente
-            // if (code !== 1000) { // 1000 = Normal closure
-            // scheduleReconnect(); // Comentado para evitar loop durante deploy inicial
-            // }
+            if (code !== 1000) { // 1000 = Normal closure, não reconectar se for fechamento normal
+                scheduleReconnect(); // Reativado: Tentar reconectar quando a conexão é fechada inesperadamente
+            }
         });
 
     } catch (error) {
-        console.error('Erro ao tentar criar WebSocket:', error);
-        scheduleReconnect(); // Manter aqui para o caso de falha na criação inicial do WebSocket
+        console.error("Erro ao tentar criar WebSocket:", error);
+        scheduleReconnect(); // Tentar reconectar se a criação inicial do WebSocket falhar
     }
 }
 
@@ -76,16 +70,15 @@ function scheduleReconnect() {
         console.log(`Tentando reconectar em ${delay / 1000} segundos... (Tentativa ${reconnectAttempts}/${maxReconnectAttempts})`);
         setTimeout(connectToSideSwap, delay);
     } else {
-        console.error('Número máximo de tentativas de reconexão atingido.');
+        console.error("Número máximo de tentativas de reconexão atingido. Não tentaremos mais reconectar automaticamente.");
     }
 }
 
-// Função para enviar mensagem e aguardar resposta
 function sendMessage(method, params) {
     return new Promise((resolve, reject) => {
         if (!isConnected || !sideswapWs || sideswapWs.readyState !== WebSocket.OPEN) {
-            console.error('Conexão WebSocket não está aberta ou disponível.');
-            return reject(new Error('Conexão WebSocket não está aberta.'));
+            console.error("Conexão WebSocket não está aberta ou disponível para enviar mensagem.");
+            return reject(new Error("Conexão WebSocket não está aberta."));
         }
 
         const currentId = messageId++;
@@ -95,27 +88,24 @@ function sendMessage(method, params) {
             params: params
         };
 
-        console.log('Enviando mensagem:', JSON.stringify(message));
+        console.log("Enviando mensagem:", JSON.stringify(message));
         sideswapWs.send(JSON.stringify(message));
 
-        // Armazenar a promessa para resolver quando a resposta chegar
         pendingRequests[currentId] = { resolve, reject };
 
-        // Timeout para a requisição
         setTimeout(() => {
             if (pendingRequests[currentId]) {
                 console.error(`Timeout para a requisição ID ${currentId}, método ${method}`);
                 reject(new Error(`Timeout para a requisição ${method}`));
                 delete pendingRequests[currentId];
             }
-        }, 30000); // Timeout de 30 segundos
+        }, 30000);
     });
 }
 
-// Rotas da API
-app.get('/api/assets', async (req, res) => {
+app.get("/api/assets", async (req, res) => {
     try {
-        const response = await sendMessage('assets', { all_assets: true });
+        const response = await sendMessage("assets", { all_assets: true });
         res.json(response);
     } catch (error) {
         console.error("Erro em /api/assets:", error.message);
@@ -123,9 +113,9 @@ app.get('/api/assets', async (req, res) => {
     }
 });
 
-app.get('/api/server-status', async (req, res) => {
+app.get("/api/server-status", async (req, res) => {
     try {
-        const response = await sendMessage('server_status', null);
+        const response = await sendMessage("server_status", null);
         res.json(response);
     } catch (error) {
         console.error("Erro em /api/server-status:", error.message);
@@ -133,9 +123,9 @@ app.get('/api/server-status', async (req, res) => {
     }
 });
 
-app.get('/api/markets', async (req, res) => {
+app.get("/api/markets", async (req, res) => {
     try {
-        const response = await sendMessage('market', { list_markets: {} });
+        const response = await sendMessage("market", { list_markets: {} });
         res.json(response);
     } catch (error) {
         console.error("Erro em /api/markets:", error.message);
@@ -143,14 +133,12 @@ app.get('/api/markets', async (req, res) => {
     }
 });
 
-app.get('/', (req, res) => {
-    res.send('Servidor intermediário SideSwap está no ar!');
+app.get("/", (req, res) => {
+    res.send("Servidor intermediário SideSwap está no ar!");
 });
 
-// Iniciar conexão com SideSwap ao iniciar o servidor
 connectToSideSwap();
 
-// Iniciar o servidor Express
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, "0.0.0.0", () => {
     console.log(`Servidor rodando na porta ${port} e escutando em todos os IPs.`);
 });
