@@ -1,0 +1,16 @@
+{
+  "name": "sideswap-bridge",
+  "version": "1.0.0",
+  "description": "Bridge para API WebSocket do SideSwap",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.13.0"
+  },
+  "engines": {
+    "node": "16.x"
+  }
+}
