@@ -3,7 +3,6 @@ const WebSocket = require("ws");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configuração do Express
 app.use(express.json());
 
 // Variáveis globais
@@ -12,7 +11,7 @@ let messageId = 1;
 const pendingRequests = {};
 let isConnected = false;
 let reconnectAttempts = 0;
-const maxReconnectAttempts = 10; // Definindo um limite para tentativas de reconexão
+const maxReconnectAttempts = 10; // Limite para tentativas de reconexão
 
 // Função para conectar ao WebSocket do SideSwap
 function connectToSideSwap() {
@@ -46,27 +45,27 @@ function connectToSideSwap() {
         sideswapWs.on("error", (error) => {
             console.error("Erro na conexão WebSocket:", error.message);
             isConnected = false;
-            scheduleReconnect(); // Reativado: Tentar reconectar após um erro
+            scheduleReconnect();
         });
 
         sideswapWs.on("close", (code, reason) => {
             console.log(`Conexão WebSocket fechada. Código: ${code}, Motivo: ${reason ? reason.toString() : "N/A"}`);
             isConnected = false;
-            if (code !== 1000) { // 1000 = Normal closure, não reconectar se for fechamento normal
-                scheduleReconnect(); // Reativado: Tentar reconectar quando a conexão é fechada inesperadamente
+            if (code !== 1000) { // 1000 = Normal closure
+                scheduleReconnect();
             }
         });
 
     } catch (error) {
         console.error("Erro ao tentar criar WebSocket:", error);
-        scheduleReconnect(); // Tentar reconectar se a criação inicial do WebSocket falhar
+        scheduleReconnect();
     }
 }
 
 function scheduleReconnect() {
     if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts++;
-        const delay = Math.min(30000, reconnectAttempts * 2000); // Aumenta o delay, max 30s
+        const delay = Math.min(30000, reconnectAttempts * 2000); // Máx 30s
         console.log(`Tentando reconectar em ${delay / 1000} segundos... (Tentativa ${reconnectAttempts}/${maxReconnectAttempts})`);
         setTimeout(connectToSideSwap, delay);
     } else {
@@ -103,6 +102,7 @@ function sendMessage(method, params) {
     });
 }
 
+// Endpoint de listagem de assets
 app.get("/api/assets", async (req, res) => {
     try {
         const response = await sendMessage("assets", { all_assets: true });
@@ -113,6 +113,7 @@ app.get("/api/assets", async (req, res) => {
     }
 });
 
+// Endpoint de status do servidor
 app.get("/api/server-status", async (req, res) => {
     try {
         const response = await sendMessage("server_status", null);
@@ -123,12 +124,36 @@ app.get("/api/server-status", async (req, res) => {
     }
 });
 
+// Endpoint de mercados disponíveis
 app.get("/api/markets", async (req, res) => {
     try {
         const response = await sendMessage("market", { list_markets: {} });
         res.json(response);
     } catch (error) {
         console.error("Erro em /api/markets:", error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// NOVO: Endpoint para simulação instantânea de swap (QUOTE)
+app.post("/api/instant-quote", async (req, res) => {
+    try {
+        const { base_asset, quote_asset, amount, side } = req.body;
+
+        // Exemplo: depix -> DePix, lbtc -> L-BTC
+        const market_id = `${base_asset.toLowerCase()}_${quote_asset.toLowerCase()}`;
+
+        const params = {
+            market_id,
+            side, // "buy" ou "sell"
+            amount
+        };
+
+        const response = await sendMessage("quote", params);
+
+        res.json(response);
+    } catch (error) {
+        console.error("Erro em /api/instant-quote:", error.message);
         res.status(500).json({ error: error.message });
     }
 });
