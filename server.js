@@ -15,7 +15,7 @@ const maxReconnectAttempts = 10; // Limite para tentativas de reconexão
 
 // Função para conectar ao WebSocket do SideSwap
 function connectToSideSwap() {
-    const wsUrl = "wss://api-testnet.sideswap.io/json-rpc-ws";
+    const wsUrl = "wss://api.sideswap.io/json-rpc-ws";
     console.log(`Tentativa ${reconnectAttempts + 1}: Conectando a ${wsUrl}...`);
 
     try {
