@@ -1,12 +1,12 @@
 {
   "name": "sideswap-bridge",
   "version": "1.0.0",
-  "main": "server.js", // ou index.js, como for seu arquivo principal
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.17.1", // Use a versão mais recente
-    "ws": "^8.5.0"       // Use a versão mais recente
+    "express": "^4.17.1",
+    "ws": "^8.5.0"
   }
 }
