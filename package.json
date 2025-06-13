@@ -15,7 +15,7 @@
   "author": "Seu Nome",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",  // Ou a versão mais recente
-    "ws": "^8.13.0"        // Ou a versão mais recente
+    "express": "^4.18.2",
+    "ws": "^8.13.0"
   }
 }
