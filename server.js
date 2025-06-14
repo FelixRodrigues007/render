@@ -28,13 +28,14 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // --- Configuração ---
+// Modificar as configurações de timeout
 const CONFIG = {
     HETZNER_SERVER_IP: process.env.HETZNER_IP || 'localhost',
     WS_PORT: process.env.WS_PORT || '9933',
     HTTP_PORT: process.env.PORT || 3000,
     RECONNECT_INTERVAL: parseInt(process.env.RECONNECT_INTERVAL || '5000', 10), // Default 5 seconds
-    REQUEST_TIMEOUT: parseInt(process.env.REQUEST_TIMEOUT || '30000', 10), // Default 30 seconds for general requests
-    QUOTE_REQUEST_TIMEOUT: parseInt(process.env.QUOTE_REQUEST_TIMEOUT || '20000', 10), // Default 20 seconds for quote requests
+    REQUEST_TIMEOUT: parseInt(process.env.REQUEST_TIMEOUT || '35000', 10), // Aumentar para 35 segundos
+    QUOTE_REQUEST_TIMEOUT: parseInt(process.env.QUOTE_REQUEST_TIMEOUT || '35000', 10), // Aumentar para 35 segundos
     MAX_RECONNECT_ATTEMPTS: parseInt(process.env.MAX_RECONNECT_ATTEMPTS || '10', 10),
     QUOTE_RETRIES: parseInt(process.env.QUOTE_RETRIES || '3', 10), // Default 3 retries for quote requests
     QUOTE_RETRY_DELAY_MS: parseInt(process.env.QUOTE_RETRY_DELAY_MS || '1000', 10), // Initial delay for quote retries
