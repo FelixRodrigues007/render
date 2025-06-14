@@ -3,19 +3,11 @@
   "version": "1.0.0",
   "description": "HTTP bridge to SideSwap Manager WebSocket API",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [
-    "sideswap",
-    "liquid",
-    "bitcoin"
-  ],
-  "author": "Seu Nome",
-  "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
+    "express": "^4.18.0",
     "ws": "^8.13.0"
+  },
+  "scripts": {
+    "start": "node server.js"
   }
 }
