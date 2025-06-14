@@ -262,8 +262,7 @@ function sendHeartbeat() {
             pongTimeoutId = setTimeout(() => {
                 log('warn', 'Pong não recebido a tempo, terminando conexão WebSocket');
                 wsClient.terminate();
--            }, PONG_TIMEOUT);
-+            }, CONFIG.PONG_TIMEOUT);
+            }, CONFIG.PONG_TIMEOUT);
         } catch (e) {
             log('error', 'Failed to send heartbeat:', e.message);
         }
