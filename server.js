@@ -130,8 +130,7 @@ function connectToSideSwapManager() {
         sendHeartbeat();
         // Iniciar heartbeat periódico
         if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
-        -         heartbeatIntervalId = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
-        +         heartbeatIntervalId = setInterval(sendHeartbeat, CONFIG.HEARTBEAT_INTERVAL);
+        heartbeatIntervalId = setInterval(sendHeartbeat, CONFIG.HEARTBEAT_INTERVAL);
     });
 
     wsClient.on('message', (data) => {
