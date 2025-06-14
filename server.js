@@ -523,7 +523,7 @@ app.post('/api/quote', async (req, res) => {
             if (e.message.startsWith('{')) {
                 errorDetails = JSON.parse(e.message);
             }
-        } catch (parseError) {
+        } catch {
             // Ignorar erro de parsing
         }
         
