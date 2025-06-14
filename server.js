@@ -30,7 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 // --- Configuração ---
 // Modificar as configurações de timeout
 const CONFIG = {
-    HETZNER_SERVER_IP: process.env.HETZNER_IP || 'localhost',
+    HETZNER_IP: process.env.HETZNER_IP || 'localhost',
     WS_PORT: process.env.WS_PORT || '9933',
     HTTP_PORT: process.env.PORT || 3000,
     RECONNECT_INTERVAL: parseInt(process.env.RECONNECT_INTERVAL || '5000', 10), // Default 5 seconds
@@ -41,10 +41,12 @@ const CONFIG = {
     QUOTE_RETRY_DELAY_MS: parseInt(process.env.QUOTE_RETRY_DELAY_MS || '1000', 10), // Initial delay for quote retries
     QUOTE_RETRY_BACKOFF_FACTOR: parseFloat(process.env.QUOTE_RETRY_BACKOFF_FACTOR || '2.0'), // Backoff factor for quote retries
     HEALTH_CHECK_INTERVAL: parseInt(process.env.HEALTH_CHECK_INTERVAL || '30000', 10), // Default 30 seconds
-    LOG_LEVEL: process.env.LOG_LEVEL || 'info' // debug, info, warn, error
+    LOG_LEVEL: process.env.LOG_LEVEL || 'info', // debug, info, warn, error
+    HEARTBEAT_INTERVAL: parseInt(process.env.HEARTBEAT_INTERVAL || '15000', 10), // 15 segundos para ping
+    PONG_TIMEOUT: parseInt(process.env.PONG_TIMEOUT || '7000', 10) // 7 segundos para receber pong
 };
 
-const SIDESWAP_MANAGER_WS_URL = `ws://${CONFIG.HETZNER_SERVER_IP}:${CONFIG.WS_PORT}/`;
+const SIDESWAP_MANAGER_WS_URL = `ws://${CONFIG.HETZNER_IP}:${CONFIG.WS_PORT}/`;
 
 // --- Estado da Aplicação ---
 let wsClient = null;
@@ -52,6 +54,8 @@ let inflightRequests = new Map();
 let reconnectAttempts = 0;
 let isShuttingDown = false;
 let lastHeartbeat = null;
+let heartbeatIntervalId = null;
+let pongTimeoutId = null;
 let connectionStats = {
     totalConnections: 0,
     totalDisconnections: 0,
@@ -120,12 +124,14 @@ function connectToSideSwapManager() {
 
     wsClient.on('open', () => {
         log('info', 'Successfully connected to SideSwap Manager WebSocket.');
-        reconnectAttempts = 0; // Reset counter on successful connection
+        reconnectAttempts = 0;
         connectionStats.totalConnections++;
         lastHeartbeat = Date.now();
-        
-        // Send initial heartbeat
         sendHeartbeat();
+        // Iniciar heartbeat periódico
+        if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
+        -         heartbeatIntervalId = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
+        +         heartbeatIntervalId = setInterval(sendHeartbeat, CONFIG.HEARTBEAT_INTERVAL);
     });
 
     wsClient.on('message', (data) => {
@@ -206,6 +212,10 @@ function connectToSideSwapManager() {
         connectionStats.totalDisconnections++;
         const reasonStr = reason ? reason.toString() : 'N/A';
         log('warn', `Disconnected from SideSwap Manager WebSocket. Code: ${code}, Reason: ${reasonStr}`);
+        wsClient = null;
+        lastHeartbeat = null;
+        if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
+        if (pongTimeoutId) clearTimeout(pongTimeoutId);
         
         wsClient = null;
         lastHeartbeat = null;
@@ -247,8 +257,14 @@ function handleNotification(notification) {
 function sendHeartbeat() {
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
         try {
-            // Implementar heartbeat se necessário pelo protocolo SideSwap
-            log('debug', 'Heartbeat sent');
+            wsClient.ping();
+            log('debug', 'Ping enviado para SideSwap Manager');
+            if (pongTimeoutId) clearTimeout(pongTimeoutId);
+            pongTimeoutId = setTimeout(() => {
+                log('warn', 'Pong não recebido a tempo, terminando conexão WebSocket');
+                wsClient.terminate();
+-            }, PONG_TIMEOUT);
++            }, CONFIG.PONG_TIMEOUT);
         } catch (e) {
             log('error', 'Failed to send heartbeat:', e.message);
         }
