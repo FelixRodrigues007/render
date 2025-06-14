@@ -1,4 +1,5 @@
 const express = require('express');
+const express = require('express');
 const WebSocket = require('ws');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -27,19 +28,20 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// --- Configuração Melhorada ---
+// --- Configuração ---
 const CONFIG = {
     HETZNER_SERVER_IP: process.env.HETZNER_IP || 'localhost',
     WS_PORT: process.env.WS_PORT || '9933',
     HTTP_PORT: process.env.PORT || 3000,
-    RECONNECT_INTERVAL: parseInt(process.env.RECONNECT_INTERVAL) || 5000,
-    REQUEST_TIMEOUT: parseInt(process.env.REQUEST_TIMEOUT) || 60000, // 60s padrão
-    QUOTE_TIMEOUT: parseInt(process.env.QUOTE_TIMEOUT) || 45000,     // 45s para quotes
-    QUOTE_RETRIES: parseInt(process.env.QUOTE_RETRIES) || 2,         // 2 tentativas
-    MAX_RECONNECT_ATTEMPTS: parseInt(process.env.MAX_RECONNECT_ATTEMPTS) || 15, // Aumentado
-    HEALTH_CHECK_INTERVAL: parseInt(process.env.HEALTH_CHECK_INTERVAL) || 30000,
-    CONNECTION_TIMEOUT: parseInt(process.env.CONNECTION_TIMEOUT) || 15000, // Timeout de conexão
-    LOG_LEVEL: process.env.LOG_LEVEL || 'info'
+    RECONNECT_INTERVAL: parseInt(process.env.RECONNECT_INTERVAL || '5000', 10), // Default 5 seconds
+    REQUEST_TIMEOUT: parseInt(process.env.REQUEST_TIMEOUT || '30000', 10), // Default 30 seconds for general requests
+    QUOTE_REQUEST_TIMEOUT: parseInt(process.env.QUOTE_REQUEST_TIMEOUT || '20000', 10), // Default 20 seconds for quote requests
+    MAX_RECONNECT_ATTEMPTS: parseInt(process.env.MAX_RECONNECT_ATTEMPTS || '10', 10),
+    QUOTE_RETRIES: parseInt(process.env.QUOTE_RETRIES || '3', 10), // Default 3 retries for quote requests
+    QUOTE_RETRY_DELAY_MS: parseInt(process.env.QUOTE_RETRY_DELAY_MS || '1000', 10), // Initial delay for quote retries
+    QUOTE_RETRY_BACKOFF_FACTOR: parseFloat(process.env.QUOTE_RETRY_BACKOFF_FACTOR || '2.0'), // Backoff factor for quote retries
+    HEALTH_CHECK_INTERVAL: parseInt(process.env.HEALTH_CHECK_INTERVAL || '30000', 10), // Default 30 seconds
+    LOG_LEVEL: process.env.LOG_LEVEL || 'info' // debug, info, warn, error
 };
 
 const SIDESWAP_MANAGER_WS_URL = `ws://${CONFIG.HETZNER_SERVER_IP}:${CONFIG.WS_PORT}/`;
@@ -55,7 +57,6 @@ let connectionStats = {
     totalDisconnections: 0,
     totalRequests: 0,
     totalErrors: 0,
-    totalTimeouts: 0,
     uptime: Date.now()
 };
 
@@ -105,7 +106,7 @@ function connectToSideSwapManager() {
     }
 
     if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-        log('error', `Maximum reconnection attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached. Manual intervention required.`);
+        log('error', `Maximum reconnection attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached. Stopping reconnection attempts.`);
         return;
     }
 
@@ -113,7 +114,7 @@ function connectToSideSwapManager() {
     log('info', `Attempting to connect to SideSwap Manager at ${SIDESWAP_MANAGER_WS_URL}... (Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS})`);
     
     wsClient = new WebSocket(SIDESWAP_MANAGER_WS_URL, {
-        handshakeTimeout: CONFIG.CONNECTION_TIMEOUT,
+        handshakeTimeout: 10000,
         perMessageDeflate: false
     });
 
@@ -174,13 +175,8 @@ function connectToSideSwapManager() {
             }
 
             if (requestId !== undefined && inflightRequests.has(requestId)) {
-                const { resolve, reject, timestamp, timeoutId } = inflightRequests.get(requestId);
+                const { resolve, reject, timestamp } = inflightRequests.get(requestId);
                 const responseTime = Date.now() - timestamp;
-                
-                // Limpar timeout
-                if (timeoutId) {
-                    clearTimeout(timeoutId);
-                }
                 
                 if (isError) {
                     connectionStats.totalErrors++;
@@ -215,34 +211,24 @@ function connectToSideSwapManager() {
         lastHeartbeat = null;
         
         // Reject all pending requests
-        for (const [id, { reject, timeoutId }] of inflightRequests) {
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-            }
+        for (const [id, { reject }] of inflightRequests) {
             reject(new Error(`WebSocket connection closed while request was in flight. Code: ${code}, Reason: ${reasonStr}`));
         }
         inflightRequests.clear();
         
         // Schedule reconnection if not shutting down
         if (!isShuttingDown && reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
-            const delay = Math.min(CONFIG.RECONNECT_INTERVAL * Math.pow(1.5, reconnectAttempts - 1), 60000); // Backoff exponencial
+            const delay = Math.min(CONFIG.RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts - 1), 30000); // Exponential backoff
             log('info', `Attempting to reconnect in ${delay / 1000}s...`);
             setTimeout(connectToSideSwapManager, delay);
         } else if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-            log('error', 'Maximum reconnection attempts reached. Check if SideSwap Manager is running on the server.');
+            log('error', 'Maximum reconnection attempts reached. Manual intervention required.');
         }
     });
 
     wsClient.on('error', (err) => {
         connectionStats.totalErrors++;
         log('error', 'SideSwap Manager WebSocket connection error:', err.message);
-        
-        // Adicionar informações específicas sobre o erro
-        if (err.code === 'ECONNREFUSED') {
-            log('error', 'Connection refused - SideSwap Manager may not be running or port 9933 is blocked');
-        } else if (err.code === 'ETIMEDOUT') {
-            log('error', 'Connection timeout - Network latency too high or server overloaded');
-        }
         
         if (wsClient && wsClient.readyState !== WebSocket.CLOSED) {
             wsClient.terminate();
@@ -253,6 +239,7 @@ function connectToSideSwapManager() {
 // --- Funções Auxiliares ---
 
 function handleNotification(notification) {
+    // Implementar lógica específica para diferentes tipos de notificações
     log('info', 'Processing notification:', notification);
     // TODO: Adicionar handlers específicos baseados no tipo de notificação
 }
@@ -289,7 +276,9 @@ function isWebSocketReady() {
 function sendWsRequest(methodVariantName, params, options = {}) {
     return new Promise((resolve, reject) => {
         const timeout = options.timeout || CONFIG.REQUEST_TIMEOUT;
-        const retries = options.retries || 0;
+        const retries = options.retries !== undefined ? options.retries : 0;
+        const retryDelay = options.retryDelay !== undefined ? options.retryDelay : CONFIG.QUOTE_RETRY_DELAY_MS;
+        const backoffFactor = options.backoffFactor !== undefined ? options.backoffFactor : CONFIG.QUOTE_RETRY_BACKOFF_FACTOR;
         
         connectionStats.totalRequests++;
         
@@ -334,30 +323,6 @@ function sendWsRequest(methodVariantName, params, options = {}) {
             
             wsClient.send(message);
             
-            // Configurar timeout
-            const timeoutId = setTimeout(() => {
-                if (inflightRequests.has(requestId)) {
-                    connectionStats.totalErrors++;
-                    connectionStats.totalTimeouts++;
-                    log('error', `Request ${requestId} for method ${methodVariantName} timed out after ${timeout}ms`);
-                    
-                    const requestData = inflightRequests.get(requestId);
-                    inflightRequests.delete(requestId);
-                    
-                    // Implementar retry se configurado
-                    if (retries > 0) {
-                        log('info', `Retrying request ${requestId} (${retries} attempts remaining)`);
-                        setTimeout(() => {
-                            sendWsRequest(methodVariantName, params, { ...options, retries: retries - 1 })
-                                .then(resolve)
-                                .catch(reject);
-                        }, 2000); // 2s entre retries
-                    } else {
-                        reject(new Error(`Request ${requestId} for method ${methodVariantName} timed out after ${timeout}ms`));
-                    }
-                }
-            }, timeout);
-            
             // Armazenar requisição pendente
             inflightRequests.set(requestId, {
                 resolve,
@@ -365,9 +330,45 @@ function sendWsRequest(methodVariantName, params, options = {}) {
                 timestamp,
                 method: methodVariantName,
                 params,
-                retries,
-                timeoutId
+                retries
             });
+
+            // Configurar timeout
+            const timeoutId = setTimeout(() => {
+                if (inflightRequests.has(requestId)) {
+                    connectionStats.totalErrors++;
+                    log('error', `Request ${requestId} for method ${methodVariantName} timed out after ${timeout}ms`);
+                    
+                    const requestData = inflightRequests.get(requestId);
+                    inflightRequests.delete(requestId);
+                    
+                    // Implementar retry se configurado
+                    if (retries > 0) {
+                        const nextRetryDelay = Math.min(retryDelay * backoffFactor, 30000); // Cap at 30 seconds
+                        const jitter = Math.random() * 500; // Add up to 500ms of jitter
+                        const finalDelay = nextRetryDelay + jitter;
+
+                        log('info', `Retrying request ${requestId} (${retries} attempts remaining) in ${finalDelay.toFixed(0)}ms`);
+                        setTimeout(() => {
+                            sendWsRequest(methodVariantName, params, { 
+                                ...options, 
+                                retries: retries - 1,
+                                retryDelay: nextRetryDelay // Pass the new delay for next retry
+                            })
+                                .then(resolve)
+                                .catch(reject);
+                        }, finalDelay);
+                    } else {
+                        reject(new Error(`Request ${requestId} for method ${methodVariantName} timed out after ${timeout}ms`));
+                    }
+                }
+            }, timeout);
+            
+            // Armazenar timeout ID para limpeza posterior
+            const requestData = inflightRequests.get(requestId);
+            if (requestData) {
+                requestData.timeoutId = timeoutId;
+            }
 
         } catch (e) {
             connectionStats.totalErrors++;
@@ -402,8 +403,7 @@ app.get('/', (req, res) => {
         status: 'running',
         websocket_status: state,
         uptime_seconds: uptime,
-        version: '2.1.0',
-        server_url: SIDESWAP_MANAGER_WS_URL,
+        version: '2.0.0',
         timestamp: new Date().toISOString()
     });
 });
@@ -419,18 +419,12 @@ app.get('/health', (req, res) => {
             state,
             connected: isHealthy,
             last_heartbeat: lastHeartbeat ? new Date(lastHeartbeat).toISOString() : null,
-            reconnect_attempts: reconnectAttempts,
-            max_attempts: CONFIG.MAX_RECONNECT_ATTEMPTS
+            reconnect_attempts: reconnectAttempts
         },
         stats: {
             ...connectionStats,
             uptime_seconds: uptime,
             inflight_requests: inflightRequests.size
-        },
-        config: {
-            server_url: SIDESWAP_MANAGER_WS_URL,
-            quote_timeout: CONFIG.QUOTE_TIMEOUT,
-            request_timeout: CONFIG.REQUEST_TIMEOUT
         },
         timestamp: new Date().toISOString()
     };
@@ -454,8 +448,7 @@ app.get('/api/status', (req, res) => {
         requests: {
             inflight: inflightRequests.size,
             total: connectionStats.totalRequests,
-            errors: connectionStats.totalErrors,
-            timeouts: connectionStats.totalTimeouts
+            errors: connectionStats.totalErrors
         },
         connections: {
             total: connectionStats.totalConnections,
@@ -463,8 +456,6 @@ app.get('/api/status', (req, res) => {
         },
         config: {
             request_timeout: CONFIG.REQUEST_TIMEOUT,
-            quote_timeout: CONFIG.QUOTE_TIMEOUT,
-            quote_retries: CONFIG.QUOTE_RETRIES,
             reconnect_interval: CONFIG.RECONNECT_INTERVAL,
             log_level: CONFIG.LOG_LEVEL
         },
@@ -493,8 +484,6 @@ app.post('/api/quote', async (req, res) => {
                 error: 'Service temporarily unavailable',
                 message: 'WebSocket connection to SideSwap Manager is not ready',
                 websocket_status: getConnectionState(),
-                server_url: SIDESWAP_MANAGER_WS_URL,
-                suggestion: 'Check if SideSwap Manager is running on the server',
                 timestamp: new Date().toISOString()
             });
         }
@@ -511,8 +500,8 @@ app.post('/api/quote', async (req, res) => {
         
         const startTime = Date.now();
         const quoteResponse = await sendWsRequest('GetQuote', quoteParams, {
-            timeout: CONFIG.QUOTE_TIMEOUT, // Usar configuração flexível
-            retries: CONFIG.QUOTE_RETRIES  // Usar configuração flexível
+            timeout: CONFIG.QUOTE_REQUEST_TIMEOUT,
+            retries: CONFIG.QUOTE_RETRIES
         });
         
         const processingTime = Date.now() - startTime;
@@ -532,23 +521,16 @@ app.post('/api/quote', async (req, res) => {
         let statusCode = 500;
         let errorMessage = 'Internal server error';
         let errorDetails = null;
-        let suggestion = null;
         
         if (e.message.includes('timeout')) {
             statusCode = 504;
             errorMessage = 'Request timeout';
-            suggestion = 'Try again with a smaller amount or check server status';
         } else if (e.message.includes('not connected') || e.message.includes('not ready')) {
             statusCode = 503;
             errorMessage = 'Service unavailable';
-            suggestion = 'SideSwap Manager may not be running. Check server status.';
         } else if (e.message.includes('Validation')) {
             statusCode = 400;
             errorMessage = 'Invalid request';
-        } else if (e.message.includes('Connection refused')) {
-            statusCode = 503;
-            errorMessage = 'Service unavailable';
-            suggestion = 'SideSwap Manager is not running on the server';
         }
         
         // Tentar extrair detalhes do erro do SideSwap Manager
@@ -565,8 +547,6 @@ app.post('/api/quote', async (req, res) => {
             message: e.message,
             details: errorDetails,
             websocket_status: getConnectionState(),
-            server_url: SIDESWAP_MANAGER_WS_URL,
-            suggestion,
             timestamp: new Date().toISOString()
         });
     }
@@ -588,7 +568,6 @@ app.post('/api/reconnect', (req, res) => {
     
     res.json({
         message: 'Reconnection initiated',
-        server_url: SIDESWAP_MANAGER_WS_URL,
         timestamp: new Date().toISOString()
     });
 });
@@ -600,43 +579,12 @@ app.post('/api/reset-stats', (req, res) => {
         totalDisconnections: 0,
         totalRequests: 0,
         totalErrors: 0,
-        totalTimeouts: 0,
         uptime: Date.now()
     };
     
     log('info', 'Statistics reset');
     res.json({
         message: 'Statistics reset successfully',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Endpoint para diagnóstico
-app.get('/api/diagnostics', (req, res) => {
-    const state = getConnectionState();
-    const uptime = Math.floor((Date.now() - connectionStats.uptime) / 1000);
-    
-    res.json({
-        server_info: {
-            url: SIDESWAP_MANAGER_WS_URL,
-            ip: CONFIG.HETZNER_SERVER_IP,
-            port: CONFIG.WS_PORT
-        },
-        connection: {
-            status: state,
-            attempts: reconnectAttempts,
-            max_attempts: CONFIG.MAX_RECONNECT_ATTEMPTS,
-            last_heartbeat: lastHeartbeat ? new Date(lastHeartbeat).toISOString() : null
-        },
-        performance: {
-            uptime_seconds: uptime,
-            total_requests: connectionStats.totalRequests,
-            total_errors: connectionStats.totalErrors,
-            total_timeouts: connectionStats.totalTimeouts,
-            error_rate: connectionStats.totalRequests > 0 ? (connectionStats.totalErrors / connectionStats.totalRequests * 100).toFixed(2) + '%' : '0%',
-            timeout_rate: connectionStats.totalRequests > 0 ? (connectionStats.totalTimeouts / connectionStats.totalRequests * 100).toFixed(2) + '%' : '0%'
-        },
-        config: CONFIG,
         timestamp: new Date().toISOString()
     });
 });
@@ -670,7 +618,7 @@ function cleanupStaleRequests() {
     let cleanedCount = 0;
     
     for (const [id, { timestamp, reject, timeoutId }] of inflightRequests) {
-        if (now - timestamp > CONFIG.REQUEST_TIMEOUT + 10000) { // +10s de margem
+        if (now - timestamp > CONFIG.REQUEST_TIMEOUT + 5000) {
             log('warn', `Forcefully removing stale request ${id} from inflightRequests`);
             
             if (timeoutId) {
@@ -707,7 +655,6 @@ function performHealthCheck() {
             inflight_requests: inflightRequests.size,
             total_requests: connectionStats.totalRequests,
             total_errors: connectionStats.totalErrors,
-            total_timeouts: connectionStats.totalTimeouts,
             reconnect_attempts: reconnectAttempts
         });
     }
@@ -750,8 +697,6 @@ const server = app.listen(CONFIG.HTTP_PORT, () => {
     log('info', `Environment: ${process.env.NODE_ENV || 'development'}`);
     log('info', `Log level: ${CONFIG.LOG_LEVEL}`);
     log('info', `WebSocket URL: ${SIDESWAP_MANAGER_WS_URL}`);
-    log('info', `Quote timeout: ${CONFIG.QUOTE_TIMEOUT}ms`);
-    log('info', `Quote retries: ${CONFIG.QUOTE_RETRIES}`);
     
     // Iniciar conexão WebSocket
     connectToSideSwapManager();
@@ -778,4 +723,4 @@ process.on('unhandledRejection', (reason, promise) => {
     // Não fazer shutdown automático para unhandled rejections, apenas logar
 });
 
-log('info', 'SideSwap Bridge v2.1.0 initialized successfully');
+log('info', 'SideSwap Bridge v2.0.0 initialized successfully');
