@@ -48,6 +48,44 @@ const CONFIG = {
 
 const SIDESWAP_MANAGER_WS_URL = `ws://${CONFIG.HETZNER_IP}:${CONFIG.WS_PORT}/`;
 
+// Adicionar logs de conectividade
+console.log('Tentando conectar ao SideSwap Manager:', SIDESWAP_MANAGER_WS_URL);
+
+// Adicionar módulo HTTP para teste de conectividade
+const http = require('http');
+
+// Função para teste de conectividade básica antes do WebSocket
+function testBasicConnectivity() {
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: CONFIG.HETZNER_IP,
+            port: CONFIG.WS_PORT,
+            method: 'GET',
+            timeout: 5000
+        };
+
+        const req = http.request(options, (res) => {
+            log('info', `Teste HTTP básico - Status: ${res.statusCode}`);
+            resolve(true);
+        });
+
+        req.on('error', (error) => {
+            console.log('Erro de conexão WebSocket:', error.message);
+            console.log('Código do erro:', error.code);
+            log('error', 'Teste de conectividade básica falhou:', error.message);
+            reject(error);
+        });
+
+        req.on('timeout', () => {
+            log('warn', 'Timeout no teste de conectividade básica');
+            req.destroy();
+            reject(new Error('Timeout'));
+        });
+
+        req.end();
+    });
+}
+
 // --- Estado da Aplicação ---
 let wsClient = null;
 let inflightRequests = new Map();
@@ -117,6 +155,24 @@ function connectToSideSwapManager() {
     reconnectAttempts++;
     log('info', `Attempting to connect to SideSwap Manager at ${SIDESWAP_MANAGER_WS_URL}... (Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS})`);
     
+    // Teste de conectividade básica antes do WebSocket
+    testBasicConnectivity()
+        .then(() => {
+            log('info', 'Teste de conectividade básica bem-sucedido, prosseguindo com WebSocket');
+            createWebSocketConnection();
+        })
+        .catch((error) => {
+            log('error', 'Teste de conectividade básica falhou, não será possível conectar WebSocket:', error.message);
+            // Agendar nova tentativa após falha no teste básico
+            if (!isShuttingDown && reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
+                const delay = Math.min(CONFIG.RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts - 1), 30000);
+                log('info', `Reagendando tentativa de conexão em ${delay / 1000}s após falha no teste básico...`);
+                setTimeout(connectToSideSwapManager, delay);
+            }
+        });
+}
+
+function createWebSocketConnection() {
     wsClient = new WebSocket(SIDESWAP_MANAGER_WS_URL, {
         handshakeTimeout: 10000,
         perMessageDeflate: false
@@ -237,6 +293,8 @@ function connectToSideSwapManager() {
 
     wsClient.on('error', (err) => {
         connectionStats.totalErrors++;
+        console.log('Erro de conexão WebSocket:', err.message);
+        console.log('Código do erro:', err.code);
         log('error', 'SideSwap Manager WebSocket connection error:', err.message);
         
         if (wsClient && wsClient.readyState !== WebSocket.CLOSED) {
